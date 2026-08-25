@@ -140,5 +140,5 @@ MIT — see [`LICENSE`](LICENSE).
 
 ## Team
 
-Built by Kaustubha S. Bhanekar, Shreesha Rao K, and Shourya A. Kotian —
+Built by Shreesha Rao K —
 SDM School, Mangalore — for Canara Vikas 2026.
