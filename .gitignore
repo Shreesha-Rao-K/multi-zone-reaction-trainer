@@ -1,0 +1,12 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+
+# Arduino build output (if compiled locally outside the IDE's temp dir)
+*.hex
+*.elf
+build/

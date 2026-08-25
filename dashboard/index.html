@@ -1,0 +1,700 @@
+<!--
+  Multi-Zone Reaction Trainer — dashboard
+
+  Runs entirely client-side: open this file directly in Chrome or Edge
+  (Web Serial API support required — no server needed). All game logic
+  (target selection, timing, scoring, difficulty) lives here; the Arduino
+  only streams sensor readings and answers latency-calibration pings.
+
+  Works over either transport the Arduino exposes: connect to the board's
+  direct USB serial port, or to the HC-05 Bluetooth module's paired COM
+  port — both appear in the same browser port picker, and the latency
+  calibration measures whichever link you actually pick.
+
+  See ../README.md for wiring, setup, and how the system works.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi-Zone Reaction Trainer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #15181D;
+      --panel: #1E2229;
+      --tile: #2A3038;
+      --amber: #F2A93B;
+      --red: #D14343;
+      --green: #4CAF6D;
+      --muted: #8E99A8;
+      --line: #39414C;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: #EEF1F5;
+      font-family: var(--sans);
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 38px;
+    }
+
+    .topline, .panel-title, .diagnostic-label, .round-label {
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 5px 0 0;
+      font-family: var(--mono);
+      font-size: clamp(1.45rem, 4vw, 2.45rem);
+      letter-spacing: -0.06em;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .status.connected .status-dot { background: var(--green); box-shadow: 0 0 12px var(--green); }
+    .status.error .status-dot { background: var(--red); box-shadow: 0 0 12px var(--red); }
+
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+
+    .arena { padding: 18px; }
+    .arena-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 16px; }
+    #roundState { color: var(--amber); font-family: var(--mono); font-size: 0.82rem; }
+    .countdown-track { height: 4px; margin: -7px 0 12px; overflow: hidden; border-radius: 2px; background: #101318; opacity: 0; transition: opacity 120ms; }
+    .countdown-track.visible { opacity: 1; }
+    .countdown-bar { width: 0; height: 100%; background: var(--amber); }
+    .countdown-bar.hit { background: var(--green); }
+    .countdown-bar.miss { background: var(--red); }
+
+    .zones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .zone {
+      min-height: 190px;
+      padding: 15px;
+      border: 1px solid #3B4450;
+      border-radius: 6px;
+      background: var(--tile);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: background 100ms, border-color 100ms, box-shadow 100ms;
+    }
+
+    .zone.active { background: #4A3924; border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber), 0 0 22px #F2A93B33; }
+    .zone.hit { background: #244431; border-color: var(--green); }
+    .zone.miss { background: #4A292B; border-color: var(--red); }
+    .zone-name { font-weight: 800; font-size: 0.76rem; letter-spacing: 0.1em; color: #BAC3CF; }
+    .zone-number { font: 800 clamp(2.8rem, 7vw, 5rem)/1 var(--mono); color: #DCE2E9; letter-spacing: -0.1em; }
+
+    .controls { padding: 18px; display: grid; gap: 18px; align-content: start; }
+    .control-group { display: grid; gap: 8px; }
+    .button-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    button {
+      border: 1px solid #4B5664;
+      border-radius: 4px;
+      padding: 10px 8px;
+      background: #262C34;
+      color: #E7EBF0;
+      cursor: pointer;
+      font: 700 0.78rem var(--sans);
+    }
+    button:hover:not(:disabled) { border-color: var(--amber); }
+    button.selected { background: var(--amber); border-color: var(--amber); color: #17130C; }
+    button:disabled { cursor: not-allowed; opacity: 0.42; }
+    .primary { width: 100%; background: var(--amber); border-color: var(--amber); color: #17130C; font-weight: 900; }
+    .secondary { width: 100%; background: transparent; }
+
+    .readout { border-top: 1px solid var(--line); padding-top: 15px; }
+    .readout-value { margin-top: 4px; color: var(--amber); font: 800 1.15rem var(--mono); }
+    #calibration { color: #C9D0D9; font: 700 0.83rem var(--mono); line-height: 1.5; }
+    .latency-explanation { margin-top: 5px; color: var(--muted); font-size: 0.7rem; line-height: 1.45; }
+
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 18px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .stat { background: var(--panel); padding: 12px; }
+    .stat-value { display: block; margin-top: 5px; font: 800 1rem var(--mono); color: var(--amber); }
+
+    .diagnostics { margin-top: 18px; padding: 13px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .distance-list { display: grid; grid-template-columns: repeat(4, minmax(94px, 1fr)); gap: 9px; flex: 1; }
+    .distance { font: 700 0.88rem var(--mono); color: #CED5DE; }
+    .distance span { color: var(--amber); }
+
+    .history { margin-top: 18px; padding: 16px; }
+    #historyList { list-style: none; padding: 0; margin: 12px 0 0; font: 0.8rem var(--mono); }
+    #historyList li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+    .result-hit { color: var(--green); }
+    .result-miss { color: var(--red); }
+
+    @media (max-width: 780px) {
+      .layout { grid-template-columns: 1fr; }
+      .zone { min-height: 126px; }
+    }
+    @media (max-width: 490px) {
+      main { width: min(100% - 20px, 1120px); padding-top: 18px; }
+      .zones { gap: 5px; }
+      .zone { padding: 9px; min-height: 112px; }
+      .distance-list { grid-template-columns: repeat(2, 1fr); }
+      .stats { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="topline">Four-zone timing system</div>
+        <h1>MULTI-ZONE REACTION TRAINER</h1>
+      </div>
+      <div id="connectionStatus" class="status disconnected"><span class="status-dot"></span><span>DISCONNECTED</span></div>
+    </header>
+
+    <section class="layout">
+      <section class="arena panel">
+        <div class="arena-head"><span class="panel-title">Target field</span><span id="roundState">STANDBY</span></div>
+        <div id="countdownTrack" class="countdown-track" aria-hidden="true"><div id="countdownBar" class="countdown-bar"></div></div>
+        <div class="zones">
+          <div class="zone" data-zone="0"><span class="zone-name">ZONE 01</span><strong class="zone-number">1</strong></div>
+          <div class="zone" data-zone="1"><span class="zone-name">ZONE 02</span><strong class="zone-number">2</strong></div>
+          <div class="zone" data-zone="2"><span class="zone-name">ZONE 03</span><strong class="zone-number">3</strong></div>
+          <div class="zone" data-zone="3"><span class="zone-name">ZONE 04</span><strong class="zone-number">4</strong></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="panel-title">Best corrected</span><span class="stat-value" id="bestStat">—</span></div>
+          <div class="stat"><span class="panel-title">Average corrected</span><span class="stat-value" id="averageStat">—</span></div>
+          <div class="stat"><span class="panel-title">Hit / miss</span><span class="stat-value" id="ratioStat">0 / 0</span></div>
+        </div>
+      </section>
+
+      <aside class="controls panel">
+        <div class="control-group">
+          <span class="panel-title">Link</span>
+          <button id="connectButton" class="primary">CONNECT</button>
+          <div id="calibration">Connect to the Arduino's serial port (USB or paired Bluetooth) to calibrate the link.</div>
+          <div id="latencyExplanation" class="latency-explanation" hidden>Measured automatically on connect — subtracted from every reaction time so the wireless link’s own delay is never counted as part of your reflex.</div>
+        </div>
+        <div class="control-group">
+          <span class="panel-title">Difficulty</span>
+          <div class="button-row" id="difficultyButtons">
+            <button data-window="1200" class="selected">EASY</button>
+            <button data-window="800">MEDIUM</button>
+            <button data-window="500">HARD</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <span class="panel-title">Session mode</span>
+          <div class="button-row" id="modeButtons">
+            <button data-mode="practice" class="selected">PRACTICE</button>
+            <button data-mode="scored">SCORED TEST</button>
+          </div>
+        </div>
+        <div class="readout"><span class="panel-title">Last result</span><div id="lastResult" class="readout-value">READY</div></div>
+        <button id="startButton" class="primary" disabled>START SESSION</button>
+        <button id="stopButton" class="secondary" disabled>STOP / RESET</button>
+      </aside>
+    </section>
+
+    <section class="diagnostics panel" aria-label="Live sensor diagnostics">
+      <span class="diagnostic-label">Live raw distances</span>
+      <div class="distance-list">
+        <div class="distance">Z1 <span id="distance0">— cm</span></div>
+        <div class="distance">Z2 <span id="distance1">— cm</span></div>
+        <div class="distance">Z3 <span id="distance2">— cm</span></div>
+        <div class="distance">Z4 <span id="distance3">— cm</span></div>
+      </div>
+    </section>
+
+    <section class="history panel"><span class="panel-title">Recent rounds</span><ul id="historyList"><li><span>No rounds yet.</span><span>—</span></li></ul></section>
+  </main>
+
+  <script>
+    "use strict";
+
+    const TRIGGER_THRESHOLD_CM = 8; // Tune after the sensors are mounted and tested.
+    const CALIBRATION_SAMPLES = 8;
+    const STREAM_STALE_MS = 3000;
+    const ROUND_PAUSE_MS = 1000;
+
+    let port = null;
+    let writer = null;
+    let isConnected = false;
+    let estimatedLinkLatency = null;
+    let pingCounter = 0;
+    let lastDataAt = 0;
+    let serialBuffer = "";
+    let calibrationWaiter = null;
+    let serialStartupWaiter = null;
+    let selectedWindow = 1200;
+    let selectedMode = "practice";
+    let sessionRunning = false;
+    let activeRound = null;
+    let roundTimer = null;
+    let nextRoundTimer = null;
+    let zoneWasBelow = [false, false, false, false];
+    let hasZoneReading = [false, false, false, false];
+    let recentRounds = [];
+    let scoredHits = [];
+    let scoredMisses = 0;
+    let countdownAnimationFrame = null;
+
+    const statusElement = document.querySelector("#connectionStatus");
+    const calibrationElement = document.querySelector("#calibration");
+    const latencyExplanationElement = document.querySelector("#latencyExplanation");
+    const connectButton = document.querySelector("#connectButton");
+    const startButton = document.querySelector("#startButton");
+    const stopButton = document.querySelector("#stopButton");
+    const roundStateElement = document.querySelector("#roundState");
+    const lastResultElement = document.querySelector("#lastResult");
+    const zoneElements = [...document.querySelectorAll(".zone")];
+    const sessionOptionButtons = [...document.querySelectorAll("#difficultyButtons button, #modeButtons button")];
+    const countdownTrack = document.querySelector("#countdownTrack");
+    const countdownBar = document.querySelector("#countdownBar");
+
+    function setConnectionState(state, text) {
+      statusElement.className = `status ${state}`;
+      statusElement.lastElementChild.textContent = text;
+    }
+
+    function setControls() {
+      const ready = isConnected && estimatedLinkLatency !== null;
+      connectButton.disabled = isConnected;
+      connectButton.textContent = isConnected ? "CONNECTED" : "CONNECT";
+      startButton.disabled = !ready || sessionRunning;
+      stopButton.disabled = !sessionRunning;
+      sessionOptionButtons.forEach(button => {
+        button.disabled = sessionRunning;
+      });
+    }
+
+    function median(values) {
+      const sorted = [...values].sort((a, b) => a - b);
+      const middle = sorted.length / 2;
+      return (sorted[middle - 1] + sorted[middle]) / 2;
+    }
+
+    function formatMs(value) {
+      return `${Math.round(value)} ms`;
+    }
+
+    async function sendLine(line) {
+      if (!writer) {
+        throw new Error("Serial writer is unavailable.");
+      }
+
+      await writer.write(new TextEncoder().encode(`${line}\n`));
+    }
+
+    async function connect() {
+      connectButton.disabled = true;
+
+      if (!("serial" in navigator)) {
+        setConnectionState("error", "WEB SERIAL UNSUPPORTED");
+        calibrationElement.textContent = "Use Chrome or Edge with Web Serial enabled.";
+        return;
+      }
+
+      try {
+        setConnectionState("disconnected", "SELECTING PORT");
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        writer = port.writable.getWriter();
+        isConnected = true;
+        lastDataAt = performance.now();
+        setConnectionState("connected", "CONNECTED");
+        setControls();
+        readSerial();
+        calibrationElement.textContent = "Waiting for Arduino USB link...";
+        latencyExplanationElement.hidden = true;
+        await waitForArduinoStartup();
+        await calibrateLink();
+      } catch (error) {
+        handleSerialFailure(error);
+      }
+    }
+
+    function waitForArduinoStartup() {
+      return new Promise((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          if (serialStartupWaiter) {
+            serialStartupWaiter = null;
+            reject(new Error("Arduino USB serial did not start."));
+          }
+        }, 2800);
+
+        serialStartupWaiter = () => {
+          clearTimeout(timeout);
+          serialStartupWaiter = null;
+          resolve();
+        };
+      });
+    }
+
+    async function readSerial() {
+      const reader = port.readable.getReader();
+      const decoder = new TextDecoder();
+
+      try {
+        while (isConnected) {
+          const { value, done } = await reader.read();
+          if (done) {
+            throw new Error("Serial port closed.");
+          }
+          if (value) {
+            serialBuffer += decoder.decode(value, { stream: true });
+            const lines = serialBuffer.split(/\r?\n/);
+            serialBuffer = lines.pop();
+            lines.forEach(handleSerialLine);
+          }
+        }
+      } catch (error) {
+        if (isConnected) {
+          handleSerialFailure(error);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    function handleSerialLine(line) {
+      if (!line) {
+        return;
+      }
+
+      lastDataAt = performance.now();
+      if (!isConnected) {
+        return;
+      }
+
+      if (line.startsWith("PONG:")) {
+        const token = line.slice(5);
+        if (calibrationWaiter && calibrationWaiter.token === token) {
+          calibrationWaiter.resolve(performance.now());
+          calibrationWaiter = null;
+        }
+        return;
+      }
+
+      if (line.startsWith("DIST:")) {
+        const distances = line.slice(5).split(",").map(Number);
+        if (distances.length === 4 && distances.every(Number.isFinite)) {
+          if (serialStartupWaiter) {
+            serialStartupWaiter();
+          }
+          processDistances(distances);
+        }
+      }
+    }
+
+    async function calibrateLink() {
+      calibrationElement.textContent = "Calibrating link… 0 / 8";
+      latencyExplanationElement.hidden = true;
+      const roundTrips = [];
+
+      for (let index = 0; index < CALIBRATION_SAMPLES; index++) {
+        const token = String(++pingCounter);
+        const roundTrip = await pingAndWait(token, index);
+        roundTrips.push(roundTrip);
+      }
+
+      estimatedLinkLatency = median(roundTrips) / 2;
+      calibrationElement.textContent = `Link latency: ${formatMs(estimatedLinkLatency)}`;
+      latencyExplanationElement.hidden = false;
+      lastResultElement.textContent = "READY";
+      setControls();
+    }
+
+    function pingAndWait(token, index) {
+      return new Promise(async (resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          if (calibrationWaiter && calibrationWaiter.token === token) {
+            calibrationWaiter = null;
+            reject(new Error("Calibration ping timed out."));
+          }
+        }, 1800);
+
+        calibrationWaiter = {
+          token,
+          sentAt: performance.now(),
+          resolve(receivedAt) {
+            clearTimeout(timeout);
+            calibrationElement.textContent = `Calibrating link… ${index + 1} / ${CALIBRATION_SAMPLES}`;
+            resolve(receivedAt - this.sentAt);
+          }
+        };
+
+        try {
+          await sendLine(`PING:${token}`);
+        } catch (error) {
+          clearTimeout(timeout);
+          calibrationWaiter = null;
+          reject(error);
+        }
+      });
+    }
+
+    function processDistances(distances) {
+      distances.forEach((distance, zone) => {
+        document.querySelector(`#distance${zone}`).textContent = `${distance} cm`;
+        const isBelow = distance < TRIGGER_THRESHOLD_CM;
+        const justCrossedIntoRange = hasZoneReading[zone] && !zoneWasBelow[zone] && isBelow;
+        zoneWasBelow[zone] = isBelow;
+        hasZoneReading[zone] = true;
+
+        if (justCrossedIntoRange) {
+          processZoneTransition(zone, performance.now());
+        }
+      });
+    }
+
+    function processZoneTransition(zone, hitTime) {
+      if (!sessionRunning || !activeRound) {
+        return;
+      }
+
+      if (zone !== activeRound.zone) {
+        finishRound(false, "WRONG ZONE", zone, hitTime);
+        return;
+      }
+
+      if (hitTime > activeRound.deadline) {
+        finishRound(false, "TOO SLOW", zone, hitTime);
+        return;
+      }
+
+      const correctedTime = Math.max(0, (hitTime - activeRound.startedAt) - estimatedLinkLatency);
+      finishRound(true, formatMs(correctedTime), zone, hitTime, correctedTime);
+    }
+
+    function startSession() {
+      sessionRunning = true;
+      recentRounds = [];
+      scoredHits = [];
+      scoredMisses = 0;
+      lastResultElement.textContent = "ARMED";
+      updateStats();
+      renderHistory();
+      setControls();
+      beginRound();
+    }
+
+    function beginRound() {
+      if (!sessionRunning || !isConnected || estimatedLinkLatency === null) {
+        return;
+      }
+
+      clearZoneStates();
+      const zone = Math.floor(Math.random() * 4);
+      const startedAt = performance.now();
+      activeRound = {
+        zone,
+        startedAt,
+        deadline: startedAt + selectedWindow + estimatedLinkLatency
+      };
+      zoneElements[zone].classList.add("active");
+      roundStateElement.textContent = `TARGET: ZONE ${zone + 1}`;
+      lastResultElement.textContent = "GO";
+      startCountdownBar();
+      roundTimer = window.setTimeout(() => {
+        if (activeRound && activeRound.zone === zone) {
+          finishRound(false, "TOO SLOW", zone, performance.now());
+        }
+      }, selectedWindow + estimatedLinkLatency);
+    }
+
+    function finishRound(hit, outcome, zone, occurredAt, correctedTime = null) {
+      if (!activeRound) {
+        return;
+      }
+
+      const targetZone = activeRound.zone;
+      clearTimeout(roundTimer);
+      activeRound = null;
+      finishCountdownBar(hit);
+      clearZoneStates();
+      zoneElements[hit ? targetZone : zone].classList.add(hit ? "hit" : "miss");
+      roundStateElement.textContent = hit ? "HIT RECORDED" : outcome;
+      lastResultElement.textContent = outcome;
+
+      const record = { targetZone, hit, outcome, correctedTime };
+      recentRounds.unshift(record);
+      recentRounds = recentRounds.slice(0, 8);
+      if (selectedMode === "scored") {
+        if (hit) {
+          scoredHits.push(correctedTime);
+        } else {
+          scoredMisses++;
+        }
+      }
+      renderHistory();
+      updateStats();
+
+      nextRoundTimer = window.setTimeout(() => {
+        clearZoneStates();
+        if (sessionRunning) {
+          beginRound();
+        }
+      }, ROUND_PAUSE_MS);
+    }
+
+    function stopSession() {
+      const hitCount = selectedMode === "scored" ? scoredHits.length : recentRounds.filter(round => round.hit).length;
+      const missCount = selectedMode === "scored" ? scoredMisses : recentRounds.filter(round => !round.hit).length;
+      sessionRunning = false;
+      activeRound = null;
+      clearTimeout(roundTimer);
+      clearTimeout(nextRoundTimer);
+      clearZoneStates();
+      resetCountdownBar();
+      roundStateElement.textContent = "SESSION COMPLETE";
+      lastResultElement.textContent = `FINAL ${hitCount} / ${missCount}`;
+      setControls();
+    }
+
+    function startCountdownBar() {
+      if (countdownAnimationFrame !== null) {
+        cancelAnimationFrame(countdownAnimationFrame);
+      }
+      countdownTrack.classList.add("visible");
+      countdownBar.classList.remove("hit", "miss");
+      countdownBar.style.transition = "none";
+      countdownBar.style.width = "100%";
+      countdownAnimationFrame = requestAnimationFrame(() => {
+        countdownBar.style.transition = `width ${selectedWindow}ms linear`;
+        countdownBar.style.width = "0%";
+        countdownAnimationFrame = null;
+      });
+    }
+
+    function finishCountdownBar(hit) {
+      if (countdownAnimationFrame !== null) {
+        cancelAnimationFrame(countdownAnimationFrame);
+        countdownAnimationFrame = null;
+      }
+      const currentWidth = getComputedStyle(countdownBar).width;
+      countdownBar.style.transition = "none";
+      countdownBar.style.width = currentWidth;
+      countdownBar.classList.add(hit ? "hit" : "miss");
+      window.setTimeout(resetCountdownBar, 350);
+    }
+
+    function resetCountdownBar() {
+      if (countdownAnimationFrame !== null) {
+        cancelAnimationFrame(countdownAnimationFrame);
+        countdownAnimationFrame = null;
+      }
+      countdownTrack.classList.remove("visible");
+      countdownBar.classList.remove("hit", "miss");
+      countdownBar.style.transition = "none";
+      countdownBar.style.width = "0%";
+    }
+
+    function clearZoneStates() {
+      zoneElements.forEach(element => element.classList.remove("active", "hit", "miss"));
+    }
+
+    function updateStats() {
+      const hits = selectedMode === "scored" ? scoredHits : recentRounds.filter(round => round.hit).map(round => round.correctedTime);
+      const misses = selectedMode === "scored" ? scoredMisses : recentRounds.filter(round => !round.hit).length;
+      document.querySelector("#bestStat").textContent = hits.length ? formatMs(Math.min(...hits)) : "—";
+      document.querySelector("#averageStat").textContent = hits.length ? formatMs(hits.reduce((sum, value) => sum + value, 0) / hits.length) : "—";
+      document.querySelector("#ratioStat").textContent = `${hits.length} / ${misses}`;
+    }
+
+    function renderHistory() {
+      const list = document.querySelector("#historyList");
+      if (!recentRounds.length) {
+        list.innerHTML = "<li><span>No rounds yet.</span><span>—</span></li>";
+        return;
+      }
+      list.innerHTML = recentRounds.map(round => {
+        const result = round.hit ? round.outcome : `${round.outcome} · T${round.targetZone + 1}`;
+        return `<li><span>ZONE ${round.targetZone + 1}</span><span class="${round.hit ? "result-hit" : "result-miss"}">${result}</span></li>`;
+      }).join("");
+    }
+
+    async function handleSerialFailure(error) {
+      const message = error instanceof Error ? error.message : "Serial connection failed.";
+      isConnected = false;
+      estimatedLinkLatency = null;
+      sessionRunning = false;
+      activeRound = null;
+      clearTimeout(roundTimer);
+      clearTimeout(nextRoundTimer);
+      serialStartupWaiter = null;
+      clearZoneStates();
+      resetCountdownBar();
+      setConnectionState("error", "CONNECTION ERROR");
+      calibrationElement.textContent = message;
+      latencyExplanationElement.hidden = true;
+      roundStateElement.textContent = "LINK LOST";
+      setControls();
+      if (writer) {
+        writer.releaseLock();
+        writer = null;
+      }
+      if (port) {
+        try {
+          await port.close();
+        } catch (closeError) {
+        }
+        port = null;
+      }
+    }
+
+    connectButton.addEventListener("click", connect);
+    startButton.addEventListener("click", startSession);
+    stopButton.addEventListener("click", stopSession);
+    document.querySelectorAll("#difficultyButtons button").forEach(button => {
+      button.addEventListener("click", () => {
+        selectedWindow = Number(button.dataset.window);
+        document.querySelectorAll("#difficultyButtons button").forEach(item => item.classList.toggle("selected", item === button));
+      });
+    });
+    document.querySelectorAll("#modeButtons button").forEach(button => {
+      button.addEventListener("click", () => {
+        selectedMode = button.dataset.mode;
+        document.querySelectorAll("#modeButtons button").forEach(item => item.classList.toggle("selected", item === button));
+      });
+    });
+    navigator.serial?.addEventListener("disconnect", event => {
+      if (event.port === port) {
+        handleSerialFailure(new Error("Serial port disconnected."));
+      }
+    });
+    window.setInterval(() => {
+      if (isConnected && performance.now() - lastDataAt > STREAM_STALE_MS) {
+        handleSerialFailure(new Error("No serial data received for 3 seconds."));
+      }
+    }, 500);
+  </script>
+</body>
+</html>
