@@ -7,7 +7,10 @@ one at random each round, times your response, and automatically corrects
 for the communication link's own delay so that delay is never mistaken for
 part of your reflex.
 
-Built for the **Canara Vikas** competition, 2026.
+Built for **VIKRAMA 2026** — a Science Modelling Competition organized by
+Akhil Bharatiya Vidyarthi Parishad (ABVP), Mangaluru, in association with
+Canara Educational Institutions, held at Canara Vikaas PU College,
+Mangaluru, to commemorate the birth anniversary of Vikram Sarabhai.
 
 ## Why spatial reaction, not just speed
 
@@ -141,4 +144,4 @@ MIT — see [`LICENSE`](LICENSE).
 ## Team
 
 Built by Shreesha Rao K —
-SDM School, Mangalore — for Canara Vikas 2026.
+SDM School, Mangalore — for VIKRAMA 2026.
