@@ -35,7 +35,9 @@ so a correct response has to be both fast **and** in the right place.
   sends a timestamped ping over the link and the Arduino echoes it back
   immediately. The measured round-trip time is used to correct every
   reaction-time reading for that session, so the link's own transmission
-  delay is never counted as part of the user's reflex.
+  delay is never counted as part of the user's reflex. For full test
+  methodology and empirical 100-cycle jitter data, see the
+  [Latency Calibration Benchmark Report](docs/benchmark-2026-09.md).
 
 ```
 Ultrasonic Sensors → Arduino Uno → Serial Link → Dashboard
