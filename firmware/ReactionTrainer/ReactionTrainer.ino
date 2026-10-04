@@ -18,9 +18,23 @@
 // defaults to off.
 #define VERBOSE_SERIAL_DEBUG 0
 
-const byte sharedTrigPin = 2;
-const byte zoneEchoPins[] = {3, 4, 5, 6};
 const byte zoneCount = 4;
+
+// --- Hardware Trigger Wiring Mode ---
+// 0 = VIKRAMA 2026 competition build: All 4 HC-SR04 TRIG pins tied together to pin D2
+//     (enables a breadboard-less build by twisting male jumper ends together). Acoustic
+//     reflections between zones dissipate via the 60 ms triggerSettleMillis delay.
+// 1 = Independent TRIG lines: Zone 1–4 TRIG lines wired to dedicated pins (D2, D7, D8, D9)
+//     for full acoustic and electrical isolation between sensors to eliminate cross-talk.
+#define INDEPENDENT_TRIG_PINS 0
+
+#if INDEPENDENT_TRIG_PINS
+const byte zoneTrigPins[zoneCount] = {2, 7, 8, 9};
+#else
+const byte sharedTrigPin = 2;
+#endif
+
+const byte zoneEchoPins[zoneCount] = {3, 4, 5, 6};
 const unsigned long echoTimeoutMicros = 25000UL;
 const unsigned long triggerSettleMillis = 60UL;
 
@@ -33,8 +47,15 @@ char usbIncomingLine[32];
 byte usbIncomingLength = 0;
 
 void setup() {
+#if INDEPENDENT_TRIG_PINS
+  for (byte zone = 0; zone < zoneCount; zone++) {
+    pinMode(zoneTrigPins[zone], OUTPUT);
+    digitalWrite(zoneTrigPins[zone], LOW);
+  }
+#else
   pinMode(sharedTrigPin, OUTPUT);
   digitalWrite(sharedTrigPin, LOW);
+#endif
 
   for (byte zone = 0; zone < zoneCount; zone++) {
     pinMode(zoneEchoPins[zone], INPUT);
@@ -59,12 +80,17 @@ void loop() {
 }
 
 int readZoneDistance(byte zone) {
-  // All modules receive this trigger; this pass records the selected zone's echo.
-  digitalWrite(sharedTrigPin, LOW);
+#if INDEPENDENT_TRIG_PINS
+  const byte trigPin = zoneTrigPins[zone];
+#else
+  const byte trigPin = sharedTrigPin;
+#endif
+
+  digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
-  digitalWrite(sharedTrigPin, HIGH);
+  digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
-  digitalWrite(sharedTrigPin, LOW);
+  digitalWrite(trigPin, LOW);
 
   unsigned long pulseDuration = pulseIn(zoneEchoPins[zone], HIGH, echoTimeoutMicros);
 

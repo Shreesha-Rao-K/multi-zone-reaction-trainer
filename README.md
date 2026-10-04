@@ -44,22 +44,25 @@ Ultrasonic Sensors → Arduino Uno → Serial Link → Dashboard
                                         (game logic runs entirely here)
 ```
 
-## A note on the serial link
+## Serial Transports & Baud Rates
 
-The firmware sends identical data over **two transports at once**: a
-direct USB serial connection, and a wired HC-05 Bluetooth module. Both
-show up as options in the browser's own port picker when you click
-Connect, and the latency calibration correctly measures whichever one you
-choose — a real Bluetooth link has meaningfully more delay than USB, and
-the calibration accounts for that either way.
+The firmware supports two communication interfaces:
 
-Worth being upfront about: the Bluetooth path was the original plan, but
-the specific HC-05 clone module used for this build turned out to be
-unreliable close to the competition deadline, so the version actually
-demonstrated ran over direct USB serial instead. The Bluetooth firmware
-and protocol handling are fully implemented and should work with a
-better-behaved module — see [`VERBOSE_SERIAL_DEBUG`](#troubleshooting)
-below if you're chasing a similar issue.
+- **Primary Verified Configuration — Direct USB Serial @ 115,200 baud**: The official configuration used during the VIKRAMA 2026 live competition demonstration and documented in the latency benchmarks. High throughput with minimal packet serialization delay (`Serial.begin(115200)`).
+- **Wireless Bluetooth — HC-05 Module @ 9,600 baud**: Operates via Arduino `SoftwareSerial` on pins 10 (TX) and 11 (RX) at 9,600 baud (`bluetoothSerial.begin(9600)`).
+
+In the web dashboard, use the **Transport toggle** above the connect button:
+- `USB (115200)` opens the Web Serial port at 115,200 baud.
+- `HC-05 BT (9600)` opens the paired Bluetooth COM port at 9,600 baud.
+
+Once connected, the 8-sample latency calibration handshake automatically measures round-trip time and estimates one-way link transit delay for whichever transport is selected.
+
+> **Engineering context:** The Bluetooth path was part of the original design, but the specific HC-05 clone module proved erratic close to the competition deadline. The build actually demonstrated ran over direct USB serial. Both paths are fully implemented in firmware and supported by the dashboard transport selector.
+
+## Acoustic Isolation & Trigger Architecture
+
+- **Competition Build (Shared TRIG on D2)**: In the original VIKRAMA 2026 build, all four sensor TRIG pins were joined to Arduino pin D2 without a breadboard to reduce wire harness weight and bulk. To prevent acoustic reflections from overlapping across zones, the firmware enforces a 60 ms inter-zone settling pause (`triggerSettleMillis = 60UL`) between zone measurements. At standard sound speed (~343 m/s), 60 ms allows sonic waves to travel >20 meters and dissipate before the subsequent sensor is triggered.
+- **Independent Trigger Configuration (`INDEPENDENT_TRIG_PINS 1`)**: For environments with heavy reflective acoustic boundaries or tight enclosures, set `#define INDEPENDENT_TRIG_PINS 1` in `ReactionTrainer.ino` and wire Zone 1–4 TRIG lines to pins `D2, D7, D8, D9`. This completely isolates ultrasonic bursts to only the active zone being polled.
 
 ## Hardware
 
@@ -71,14 +74,13 @@ below if you're chasing a similar issue.
 | Jumper wires (male-to-female) | See wiring below |
 | 9V battery + Uno barrel connector | Power |
 
-No breadboard is required — see the wiring notes below for how the shared
-sensor lines are joined without one.
+No breadboard is required for the competition build — see the wiring notes below for how the shared sensor lines are joined.
 
-## Wiring
+## Wiring (Competition Build)
 
 | Connect | To |
 |---|---|
-| All 4 sensors' **TRIG** (tied together) | Arduino **D2** |
+| All 4 sensors' **TRIG** (tied together) | Arduino **D2** *(or D2, D7, D8, D9 if INDEPENDENT_TRIG_PINS enabled)* |
 | Zone 1 sensor **ECHO** | Arduino **D3** |
 | Zone 2 sensor **ECHO** | Arduino **D4** |
 | Zone 3 sensor **ECHO** | Arduino **D5** |

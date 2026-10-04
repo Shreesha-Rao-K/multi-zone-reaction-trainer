@@ -12,7 +12,7 @@ This report documents the empirical latency and jitter measurements conducted on
 
 In human reflex testing, distinguishing between neuromuscular reaction time (typically 150–350 ms) and transmission latency over peripheral serial buffers (typically 15–40 ms) is critical. Without calibration, fluctuating USB serial buffer dispatch intervals introduce variable delay that artificially inflates or distorts reaction scores. 
 
-By executing a bidirectional timestamped ping-pong handshake at session initialization, the client dashboard performs calibration cycles, computes the median round-trip time (RTT), and offsets one-way communication transit delay (\(T_{\text{delay}} \approx \text{RTT} / 2\)). Across a 100-cycle bench test on Windows 11 / Chrome 140 over direct USB serial (115,200 baud), communication delay uncertainty was reduced from a baseline RTT range of **23–40 ms** down to a residual jitter band of **±1.8 ms** (nominal ±2 ms), producing latency-compensated reaction metrics.
+By executing a bidirectional timestamped ping-pong handshake at session initialization, the client dashboard performs calibration cycles, computes the median round-trip time (RTT), and offsets one-way communication transit delay (\(T_{\text{delay}} \approx \text{RTT} / 2\)). In the September 2026 USB benchmark, the measured residual jitter was within **±1.8 ms** (nominal ±2 ms) under the tested Windows 11 + Chrome 140 configuration, down from an uncalibrated baseline RTT range of **23–40 ms**, producing latency-compensated reaction metrics.
 
 ---
 
@@ -99,7 +99,7 @@ The 100 test cycles were executed consecutively with 100 ms pacing intervals bet
 ## 5. Technical Observations
 
 1. **USB Host Controller Polling Interval**: The 23–40 ms baseline RTT range is primarily governed by Windows OS USB CDC host polling frames (typically 8–16 ms frame intervals) coupled with Arduino loop execution and serial buffering.
-2. **Jitter Elimination**: By calculating the median RTT across calibration handshakes and offsetting one-way transit delay (\(\text{RTT} / 2\)), deterministic link transit latency is removed, reducing timing uncertainty to a tight residual jitter band (\(\pm 1.8\text{ ms}\)), preventing serial link delay from corrupting raw millisecond human reaction readings.
+2. **Jitter Bounds & Live Operation**: In the tested 100-cycle USB benchmark under Windows 11 + Chrome 140, calculating the median RTT across calibration handshakes and offsetting one-way transit delay (\(\text{RTT} / 2\)) reduced measured residual timing jitter to within \(\pm 1.8\text{ ms}\). In live operation, the standard 8-sample calibration routine removes deterministic baseline link latency before trials begin, ensuring communication delay does not corrupt raw millisecond human reaction readings.
 3. **Reproducibility**: Any user connecting an Arduino Uno with the project firmware to a Chromium-based browser (Chrome, Edge, Brave) running `dashboard/index.html` can observe the 8-sample calibration handshake and verified latency estimate via the browser UI and DevTools console.
 
 ---

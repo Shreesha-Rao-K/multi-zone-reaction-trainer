@@ -197,10 +197,17 @@
 
       <aside class="controls panel">
         <div class="control-group">
+          <span class="panel-title">Transport</span>
+          <div class="button-row" id="transportButtons">
+            <button data-baud="115200" data-transport="usb" class="selected">USB (115200)</button>
+            <button data-baud="9600" data-transport="bluetooth">HC-05 BT (9600)</button>
+          </div>
+        </div>
+        <div class="control-group">
           <span class="panel-title">Link</span>
           <button id="connectButton" class="primary">CONNECT</button>
-          <div id="calibration">Connect to the Arduino's serial port (USB or paired Bluetooth) to calibrate the link.</div>
-          <div id="latencyExplanation" class="latency-explanation" hidden>Measured automatically on connect — subtracted from every reaction time so the wireless link’s own delay is never counted as part of your reflex.</div>
+          <div id="calibration">Connect to the Arduino's serial port (USB 115200 or paired HC-05 Bluetooth 9600) to calibrate the link.</div>
+          <div id="latencyExplanation" class="latency-explanation" hidden>Measured automatically on connect — subtracted from every reaction time so the communication link’s own delay is never counted as part of your reflex.</div>
         </div>
         <div class="control-group">
           <span class="panel-title">Difficulty</span>
@@ -219,7 +226,7 @@
         </div>
         <div class="readout"><span class="panel-title">Last result</span><div id="lastResult" class="readout-value">READY</div></div>
         <button id="startButton" class="primary" disabled>START SESSION</button>
-        <button id="stopButton" class="secondary" disabled>STOP / RESET</button>
+        <button id="stopButton" class="secondary" disabled>STOP SESSION</button>
       </aside>
     </section>
 
@@ -253,6 +260,8 @@
     let serialBuffer = "";
     let calibrationWaiter = null;
     let serialStartupWaiter = null;
+    let selectedTransport = "usb";
+    let selectedBaudRate = 115200;
     let selectedWindow = 1200;
     let selectedMode = "practice";
     let sessionRunning = false;
@@ -275,6 +284,7 @@
     const roundStateElement = document.querySelector("#roundState");
     const lastResultElement = document.querySelector("#lastResult");
     const zoneElements = [...document.querySelectorAll(".zone")];
+    const transportButtons = [...document.querySelectorAll("#transportButtons button")];
     const sessionOptionButtons = [...document.querySelectorAll("#difficultyButtons button, #modeButtons button")];
     const countdownTrack = document.querySelector("#countdownTrack");
     const countdownBar = document.querySelector("#countdownBar");
@@ -288,6 +298,9 @@
       const ready = isConnected && estimatedLinkLatency !== null;
       connectButton.disabled = isConnected;
       connectButton.textContent = isConnected ? "CONNECTED" : "CONNECT";
+      transportButtons.forEach(button => {
+        button.disabled = isConnected;
+      });
       startButton.disabled = !ready || sessionRunning;
       stopButton.disabled = !sessionRunning;
       sessionOptionButtons.forEach(button => {
@@ -325,14 +338,16 @@
       try {
         setConnectionState("disconnected", "SELECTING PORT");
         port = await navigator.serial.requestPort();
-        await port.open({ baudRate: 115200 });
+        await port.open({ baudRate: selectedBaudRate });
         writer = port.writable.getWriter();
         isConnected = true;
         lastDataAt = performance.now();
         setConnectionState("connected", "CONNECTED");
         setControls();
         readSerial();
-        calibrationElement.textContent = "Waiting for Arduino USB link...";
+        calibrationElement.textContent = selectedTransport === "bluetooth"
+          ? "Waiting for Arduino Bluetooth link (9600 baud)..."
+          : "Waiting for Arduino USB link (115200 baud)...";
         latencyExplanationElement.hidden = true;
         await waitForArduinoStartup();
         await calibrateLink();
@@ -346,7 +361,8 @@
         const timeout = window.setTimeout(() => {
           if (serialStartupWaiter) {
             serialStartupWaiter = null;
-            reject(new Error("Arduino USB serial did not start."));
+            const transportName = selectedTransport === "bluetooth" ? "Bluetooth serial link (9600)" : "USB serial link (115200)";
+            reject(new Error(`Arduino ${transportName} did not respond.`));
           }
         }, 2800);
 
@@ -673,6 +689,17 @@
     connectButton.addEventListener("click", connect);
     startButton.addEventListener("click", startSession);
     stopButton.addEventListener("click", stopSession);
+    transportButtons.forEach(button => {
+      button.addEventListener("click", () => {
+        if (isConnected) return;
+        selectedTransport = button.dataset.transport;
+        selectedBaudRate = Number(button.dataset.baud);
+        transportButtons.forEach(item => item.classList.toggle("selected", item === button));
+        calibrationElement.textContent = selectedTransport === "bluetooth"
+          ? "Select the paired HC-05 Bluetooth COM port (9600 baud)."
+          : "Connect via direct USB serial port (115200 baud).";
+      });
+    });
     document.querySelectorAll("#difficultyButtons button").forEach(button => {
       button.addEventListener("click", () => {
         selectedWindow = Number(button.dataset.window);
